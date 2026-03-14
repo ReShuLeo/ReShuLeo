@@ -1051,7 +1051,7 @@ def load_reviews_from_markdown(filepath: str, db: ReviewDatabase) -> int:
     pattern = re.compile(
         r"\*\*([^*]+)\*\*\s*(?:from\s+([^\n—–-]+?))?[\s—–-]+([^\n]+)?\n"
         r"(?:[★\*]{1,5}[^\n]*\n)?"
-        r"[\""]?\s*([^\""\n]{20,}(?:\n(?!\*\*)[^\n]{0,200})*)[\""]?",
+        r'["\u201c\u201d]?\s*([^"\u201c\u201d\n]{20,}(?:\n(?!\*\*)[^\n]{0,200})*)["\u201c\u201d]?',
         re.MULTILINE,
     )
 
