@@ -23,6 +23,12 @@ from bs4 import BeautifulSoup
 # ── Playwright (optional, for JS-heavy sites) ─────────────────────────────────
 try:
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    # Auto-install system dependencies if missing (needed on Colab/Docker)
+    import subprocess as _sp
+    _result = _sp.run(["playwright", "install-deps", "chromium"],
+                      capture_output=True, text=True)
+    if _result.returncode != 0:
+        print("⚠  playwright install-deps failed (may need root):", _result.stderr[:200])
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
