@@ -382,6 +382,108 @@ class ReviewDatabase:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Shared helpers: JSON-LD and Next.js __NEXT_DATA__ review extraction
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_json_ld_reviews(soup, host_name: str, city: str, region: str,
+                              platform: str, url: str, db: "ReviewDatabase") -> int:
+    """Parse Schema.org Review objects from JSON-LD <script> tags."""
+    added = 0
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+            items = data if isinstance(data, list) else [data]
+            for item in items:
+                review_list: list = []
+                if item.get("@type") == "Review":
+                    review_list = [item]
+                elif "review" in item:
+                    rv = item["review"]
+                    review_list = rv if isinstance(rv, list) else [rv]
+                for r in review_list:
+                    body = clean_text(str(r.get("reviewBody") or r.get("description") or ""))
+                    if len(body.split()) < 5:
+                        continue
+                    author = r.get("author", {})
+                    name = (author.get("name") if isinstance(author, dict) else str(author)) or "Unknown"
+                    date_str = parse_date(str(r.get("datePublished") or r.get("dateCreated") or ""))
+                    rating_obj = r.get("reviewRating", {})
+                    rating = None
+                    if isinstance(rating_obj, dict):
+                        rv_val = rating_obj.get("ratingValue")
+                        rating = float(rv_val) if rv_val else None
+                    review = build_review(
+                        platform=platform, region=region, city=city,
+                        host_name=host_name, reviewer_name=name,
+                        reviewer_location="", reviewer_country="Unknown",
+                        rating=rating, date=date_str, review_text=body, url=url,
+                    )
+                    if db.add(review):
+                        added += 1
+        except Exception:
+            pass
+    return added
+
+
+def _extract_next_data_reviews(soup, host_name: str, city: str, region: str,
+                                platform: str, url: str, db: "ReviewDatabase") -> int:
+    """Parse reviews from Next.js __NEXT_DATA__ embedded JSON blob."""
+    added = 0
+    script = soup.find("script", id="__NEXT_DATA__")
+    if not script:
+        return 0
+    try:
+        data = json.loads(script.string or "")
+
+        def _find_review_arrays(obj, depth=0):
+            if depth > 8 or not obj:
+                return []
+            if isinstance(obj, list) and len(obj) >= 1 and isinstance(obj[0], dict):
+                if any(k in obj[0] for k in ("text", "comment", "body",
+                                              "reviewBody", "review", "content", "message")):
+                    return obj
+            if isinstance(obj, dict):
+                for v in obj.values():
+                    result = _find_review_arrays(v, depth + 1)
+                    if result:
+                        return result
+            return []
+
+        reviews = _find_review_arrays(data)
+        for r in reviews:
+            text = clean_text(str(
+                r.get("text") or r.get("comment") or r.get("body") or
+                r.get("reviewBody") or r.get("content") or r.get("message") or ""
+            ))
+            if not text or len(text.split()) < 5:
+                continue
+            author = r.get("author") or r.get("user") or r.get("reviewer") or {}
+            if isinstance(author, dict):
+                name = (author.get("name") or author.get("username") or
+                        author.get("firstName") or "Unknown")
+            else:
+                name = str(author) or "Unknown"
+            date_str = parse_date(str(
+                r.get("date") or r.get("created_at") or r.get("createdAt") or
+                r.get("publishedAt") or r.get("datePublished") or ""
+            ))
+            rating_raw = (r.get("rating") or r.get("score") or
+                          r.get("stars") or r.get("ratingValue"))
+            rating = float(rating_raw) if rating_raw else None
+            review = build_review(
+                platform=platform, region=region, city=city,
+                host_name=host_name, reviewer_name=name,
+                reviewer_location="", reviewer_country="Unknown",
+                rating=rating, date=date_str, review_text=text, url=url,
+            )
+            if db.add(review):
+                added += 1
+    except Exception as e:
+        logger.debug(f"__NEXT_DATA__ extraction error for {url}: {e}")
+    return added
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Cesarine scraper (plain HTTP + BeautifulSoup)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -394,9 +496,22 @@ def scrape_cesarine_page(url: str, host_name: str, city: str, region: str, db: R
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Try multiple selectors for review blocks
+        # 1. Try structured JSON-LD first (most reliable)
+        added += _extract_json_ld_reviews(soup, host_name, city, region, "Cesarine", url, db)
+        if added:
+            return added
+
+        # 2. Try Next.js __NEXT_DATA__ blob
+        added += _extract_next_data_reviews(soup, host_name, city, region, "Cesarine", url, db)
+        if added:
+            return added
+
+        # 3. Try multiple CSS selectors for review blocks
         review_blocks = (
-            soup.select("div[class*='review']")
+            soup.select("[class*='ExperienceReview']")
+            or soup.select("[class*='ReviewCard']")
+            or soup.select("[class*='review-card']")
+            or soup.select("div[class*='review']")
             or soup.select("div[class*='Review']")
             or soup.select("article[class*='review']")
             or soup.select(".review-item")
@@ -466,18 +581,28 @@ def scrape_cesarine_playwright(url: str, host_name: str, city: str, region: str,
     added = 0
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(user_agent=random.choice(USER_AGENTS))
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--no-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                extra_http_headers={"accept-language": "en-US,en;q=0.9"},
+            )
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=30000)
-            random_sleep(2, 4)
+            try:
+                page.goto(url, wait_until="load", timeout=45000)
+            except Exception:
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            random_sleep(3, 5)
 
             # Click "Show more reviews" if present
             for _ in range(10):
                 try:
                     btn = page.locator("button:has-text('more'), button:has-text('More'), "
                                        "a:has-text('more reviews'), [class*='load-more']").first
-                    if btn.is_visible():
+                    if btn.is_visible(timeout=2000):
                         btn.click()
                         random_sleep(1.5, 3)
                     else:
@@ -489,7 +614,24 @@ def scrape_cesarine_playwright(url: str, host_name: str, city: str, region: str,
             browser.close()
 
         soup = BeautifulSoup(html, "html.parser")
-        review_blocks = soup.find_all("div", class_=re.compile(r"review", re.I))
+
+        # 1. Try __NEXT_DATA__ JSON blob first
+        n = _extract_next_data_reviews(soup, host_name, city, region, "Cesarine", url, db)
+        if n:
+            return n
+
+        # 2. Try JSON-LD
+        n = _extract_json_ld_reviews(soup, host_name, city, region, "Cesarine", url, db)
+        if n:
+            return n
+
+        # 3. CSS selectors
+        review_blocks = (
+            soup.select("[class*='ExperienceReview']")
+            or soup.select("[class*='ReviewCard']")
+            or soup.select("[class*='review-card']")
+            or soup.find_all("div", class_=re.compile(r"review", re.I))
+        )
 
         for block in review_blocks:
             name_el = block.find(class_=re.compile(r"name|author", re.I)) or block.find("strong")
@@ -542,23 +684,40 @@ def scrape_tripadvisor(url: str, host_name: str, city: str, region: str, db: Rev
     added = 0
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--no-sandbox", "--disable-dev-shm-usage"],
+            )
             context = browser.new_context(
                 user_agent=random.choice(USER_AGENTS),
                 viewport={"width": 1280, "height": 800},
+                extra_http_headers={"accept-language": "en-US,en;q=0.9"},
             )
             page = context.new_page()
 
             current_url = url
             for page_num in range(max_pages):
                 try:
-                    page.goto(current_url, wait_until="networkidle", timeout=30000)
+                    try:
+                        page.goto(current_url, wait_until="load", timeout=40000)
+                    except Exception:
+                        page.goto(current_url, wait_until="domcontentloaded", timeout=40000)
                     random_sleep(3, 5)
+
+                    # Check for bot-protection / access-denied pages
+                    page_title = page.title().lower()
+                    if any(kw in page_title for kw in ("access denied", "captcha", "robot", "blocked")):
+                        logger.warning(f"Bot-protection detected on {current_url}: '{page_title}'")
+                        break
 
                     # Expand truncated reviews
                     try:
-                        more_btn = page.locator("button:has-text('More'), span:has-text('Read more')").first
-                        if more_btn.is_visible():
+                        more_btn = page.locator(
+                            "button:has-text('More'), span:has-text('Read more'), "
+                            "button[data-automation='expandReview']"
+                        ).first
+                        if more_btn.is_visible(timeout=3000):
                             more_btn.click()
                             random_sleep(1, 2)
                     except Exception:
@@ -567,9 +726,18 @@ def scrape_tripadvisor(url: str, host_name: str, city: str, region: str, db: Rev
                     html = page.content()
                     soup = BeautifulSoup(html, "html.parser")
 
-                    # TripAdvisor review blocks
+                    # 1. Try __NEXT_DATA__ JSON (most reliable for current TA)
+                    if page_num == 0:
+                        n = _extract_next_data_reviews(soup, host_name, city, region,
+                                                       "TripAdvisor", current_url, db)
+                        if n:
+                            added += n
+                            break  # NEXT_DATA has all reviews at once
+
+                    # 2. CSS selector review blocks
                     blocks = (
                         soup.select("div[data-automation='reviewCard']")
+                        or soup.select("[data-reviewid]")
                         or soup.select("div[class*='review-container']")
                         or soup.select("div[class*='reviewSelector']")
                         or soup.select(".reviewSelector")
@@ -577,7 +745,12 @@ def scrape_tripadvisor(url: str, host_name: str, city: str, region: str, db: Rev
                     )
 
                     if not blocks:
-                        logger.warning(f"No review blocks found on {current_url} page {page_num}")
+                        # Log first 500 chars of body to diagnose
+                        body_snippet = soup.get_text()[:500].replace("\n", " ")
+                        logger.warning(
+                            f"No review blocks found on {current_url} page {page_num}. "
+                            f"Page snippet: {body_snippet[:200]}"
+                        )
                         break
 
                     page_added = 0
@@ -715,15 +888,23 @@ def scrape_airbnb(url: str, host_name: str, city: str, db: ReviewDatabase) -> in
     added = 0
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled",
+                      "--no-sandbox", "--disable-dev-shm-usage"],
+            )
             context = browser.new_context(
                 user_agent=random.choice(USER_AGENTS),
                 viewport={"width": 1440, "height": 900},
                 locale="en-US",
+                extra_http_headers={"accept-language": "en-US,en;q=0.9"},
             )
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=45000)
-            random_sleep(3, 5)
+            try:
+                page.goto(url, wait_until="load", timeout=90000)
+            except Exception:
+                page.goto(url, wait_until="domcontentloaded", timeout=90000)
+            random_sleep(4, 6)
 
             # Click "Show all reviews"
             for selector in [
@@ -757,6 +938,12 @@ def scrape_airbnb(url: str, host_name: str, city: str, db: ReviewDatabase) -> in
             browser.close()
 
         soup = BeautifulSoup(html, "html.parser")
+
+        # Try __NEXT_DATA__ first (Airbnb is a Next.js app)
+        n = _extract_next_data_reviews(soup, host_name, city, "Como", "Airbnb", url, db)
+        if n:
+            return n
+
         review_blocks = (
             soup.select("[data-testid='pdp-review-card']")
             or soup.select("[data-testid='review']")
