@@ -1,9 +1,13 @@
 # 01-NUTRITION
 
-Version: 1.0.0
+Version: 1.0.1
+Updated: 2026-10-02T17:00:56.808Z
+Reason: full bootstrap request enables normalized views; prevent competing raw diaries.
 
-Canonical location: Existing fitness workbook: legacy ДНЕВНИК plus FOOD_LOG new raw additions; FOOD_REFERENCE aliases ПРОДУКТЫ; DAILY_SUMMARY recomputed from current raw rows. Never sum component foods and overlapping meal/day totals.
+Canonical raw sources remain the existing fitness workbook's ДНЕВНИК and ПРОДУКТЫ. FOOD_LOG, FOOD_REFERENCE and DAILY_SUMMARY are read-only normalized projections, never independent mutable truth. Resolve current source and projection locations from private STORAGE-MAP / DATASETS; do not duplicate personal records in GitHub.
 
-Protocol: Read requested date(s), FOOD_LOG additions, conflicts, and relevant source references. Missing calories imply PARTIAL; an incomplete day is not zero. Corrections are new rows with supersedes. Never trust ИТОГИ as complete without reconciling raw diary: it may omit newer days.
+Read all blocks for the requested date, including noncontiguous late additions. Numeric strings may represent calories. Meal/day subtotal rows overlap food leaves; food names beginning with «УЖИН» can still be leaves. Unknown food energy remains null. A known subtotal is not a complete day. A subtotal/component disagreement creates STATE_CONFLICT; do not silently choose one as complete.
 
-Current state: retrieve the domain-filtered shared DOMAIN_STATE and the exact native dataset in STORAGE-MAP. Shared logs expose domain-filtered CHANGELOG (OPERATIONS), SOURCE (PROVENANCE) and INCIDENTS, rather than twelve duplicate log files. Empty/inactive domains remain registered routes with no invented records.
+Writes append raw facts with record_id, operation_id, event date, provenance and recorded_at. Corrections append supersedes referencing the earlier ID; preserve old raw rows, validate cycles/competing revisions, recompute projections, read back native values and journal VERIFIED. Before use compare projection source_hash against live raw inputs and regenerate stale views. Record status OPEN/CLOSED/CORRECTED separately from completeness; a corrected or closed day may remain PARTIAL.
+
+Current state, SOURCE/PROVENANCE, CHANGELOG and INCIDENTS are domain-filtered shared Control records. Empty/inactive domains hold no invented facts. Version1.0.0 remains in Git history.
