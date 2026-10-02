@@ -1,0 +1,47 @@
+import {PGlite} from '@electric-sql/pglite';
+import {postgis} from '@electric-sql/pglite-postgis';
+import {pgcrypto} from '@electric-sql/pglite/contrib/pgcrypto';
+import fs from 'node:fs/promises';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+const input=process.argv[2];if(!input)throw new Error('Provide private checkpoint directory');
+const checkpoint=JSON.parse(await fs.readFile(input+'/checkpoint.json','utf8'));
+const importSQL=await fs.readFile(input+'/import.sql','utf8');
+const create=async(extra={})=>new PGlite({extensions:{postgis,pgcrypto},...extra});
+const pg=await create();let passed=[];const mark=n=>{passed.push(n);console.log('PASS',n)};
+await pg.exec('create role anon;create role authenticated;create role service_role;');
+for(const name of ['202610020001_radar.sql','202610020002_api.sql'])await pg.exec(await fs.readFile('supabase/migrations/'+name,'utf8'));
+mark('production_schema_applies_with_postgis');
+await pg.exec(importSQL);mark('migration_transaction');
+for(const [dataset,raw] of Object.entries(checkpoint.tables)){
+ const result=await pg.query('select original from radar.legacy_records where dataset=$1 order by row_number',[dataset]);
+ const expected=raw.slice(1).filter(r=>r.some(v=>v!==''&&v!==null)).map(r=>Object.fromEntries(raw[0].slice(0,r.length).map((key,i)=>[key,r[i]])));
+ assert.deepEqual(result.rows.map(r=>r.original),expected);mark('lossless_'+dataset);
+}
+const counts=async db=>(await db.query(`select jsonb_build_object('events',(select count(*) from radar.events),'occurrences',(select count(*) from radar.event_occurrences),'edges',(select count(*) from radar.source_edges),'checks',(select count(*) from radar.search_checks),'aliases',(select count(*) from radar.entity_aliases),'audit',(select count(*) from radar.change_log)) counts`)).rows[0].counts;
+const original=await counts(pg);assert.equal(original.events,88);assert.equal(original.occurrences,88);assert.equal(original.aliases,1);assert.equal(original.edges,218);assert.equal(original.checks,135);mark('counts_and_explicit_dedup');
+assert.equal((await pg.query("select count(*)::int n from radar.sources where legacy_id like 'SRC-%'")).rows[0].n,74);
+assert.equal((await pg.query(`select count(*)::int n from radar.source_edges x join radar.source_entities a on a.id=x.from_entity join radar.source_entities b on b.id=x.to_entity where a.event_id is not null and b.artist_id is not null and x.relation in ('FEATURES','PERFORMER','ARTIST') and not exists(select 1 from radar.event_artists j where j.event_id=a.event_id and j.artist_id=b.artist_id)`)).rows[0].n,0);mark('original_sources_graph_and_artist_relations');
+await pg.exec(importSQL);assert.deepEqual(await counts(pg),original);mark('idempotent_import');
+const statuses=(await pg.query('select status,count(*)::int n from radar.event_occurrences group by status')).rows;
+assert.equal(statuses.find(r=>r.status==='VERIFIED_PRIMARY').n,49);assert.equal(statuses.find(r=>r.status==='CANDIDATE_UNVERIFIED').n,3);assert.equal(statuses.find(r=>r.status==='UNVERIFIED_IMPORT').n,15);mark('no_status_promotion');
+const search=async(db,filters={})=>(await db.query('select public.radar_search($1::jsonb) value',[JSON.stringify(filters)])).rows[0].value;
+const all=await search(pg,{limit:200});assert.equal(all.total,49);assert.ok(all.items.every(r=>r.status==='VERIFIED_PRIMARY'));assert.equal(all.mapped,0);mark('public_only_verified_no_fake_coordinates');
+const urgant=all.items.find(r=>r.legacy_id==='EV-URGANT-MIL-20261020');assert.ok(urgant);assert.equal(urgant.starts_on,'2026-10-20');assert.equal(urgant.city,'Milano');assert.ok(urgant.sources.some(s=>s.url.includes('urgant.live')));assert.ok(urgant.tickets.some(t=>t.url.includes('ticketone.it')));mark('urgant_sources_and_tickets');
+const candidate=(await pg.query('select public.radar_operator_search($1) value',[{status:'CANDIDATE_UNVERIFIED',limit:200}])).rows[0].value;assert.equal(candidate.total,3);assert.ok(candidate.items.some(r=>r.legacy_id==='CAND-DRUGA-ZRH-20261104'));mark('operator_candidates_with_conflict');
+await pg.exec('set role anon;');await assert.rejects(pg.query('select * from radar.raw_ingestion'));await assert.rejects(pg.query('select public.radar_operator_search()'));await assert.rejects(pg.query('select * from radar.telegram_messages'));await search(pg,{limit:1});await pg.exec('reset role;');mark('anonymous_private_data_and_operator_denied');
+await assert.rejects(pg.exec("update radar.legacy_records set original='{}' where dataset='EVENTS'"));await assert.rejects(pg.exec("delete from radar.change_log"));mark('audit_immutable');
+const before=(await pg.query('select count(*)::int n from radar.raw_ingestion')).rows[0].n;
+const sid=(await pg.query("select id from radar.sources where legacy_id='SRC-001'")).rows[0].id;const op='077f409b-040d-44c8-b639-c74594196ef3';
+const ingest=async text=>(await pg.query('select public.radar_ingest($1,$2,$3,$4,$5,$6) result',[op,sid,'TEST-FIXTURE',text,{fixture:true},'test_fixture'])).rows[0].result;
+assert.equal((await ingest('test')).status,'SUCCEEDED');assert.equal((await ingest('test')).status,'REPLAYED');await assert.rejects(ingest('conflicting retry'));assert.equal((await pg.query('select count(*)::int n from radar.raw_ingestion')).rows[0].n,before+1);mark('ingestion_readback_idempotency_conflict');
+// Isolated spatial fixtures: never alter imported venues or publish fictional coords.
+const ids=['00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002'];
+await pg.exec('begin;');
+await pg.query("insert into radar.locations(id,latitude,longitude,geocoding_status,geocoding_source) values($1,45.4642,9.19,'VERIFIED','SYNTHETIC_TEST_ONLY'),($2,47.3769,8.5417,'VERIFIED','SYNTHETIC_TEST_ONLY')",ids);
+await pg.query("update radar.event_occurrences set location_id=$1 where legacy_id='EV-URGANT-MIL-20261020'",[ids[0]]);
+await pg.query("update radar.event_occurrences set location_id=$1 where legacy_id='EV-URGANT-ZRH-20261018'",[ids[1]]);
+const nearby=await search(pg,{lat:45.4642,lng:9.19,radius_km:30,sort:'distance'});assert.equal(nearby.total,1);assert.equal(nearby.items[0].legacy_id,'EV-URGANT-MIL-20261020');assert.ok(nearby.items[0].distance_km<0.001);
+const box=await search(pg,{bbox:[9,45,10,46]});assert.equal(box.total,1);mark('postgis_radius_distance_bbox');await pg.exec('rollback;');assert.equal((await search(pg,{limit:200})).mapped,0);mark('spatial_fixture_rollback');
+const geocoding=await fs.readFile(input+'/geocoding.sql','utf8');await pg.exec(geocoding);const geoCounts=(await pg.query("select count(*)::int n from radar.locations where geocoding_status='VERIFIED'")).rows[0].n;assert.ok(geoCounts>0);const geoBeforeAudit=(await counts(pg)).audit;await pg.exec(geocoding);assert.equal((await counts(pg)).audit,geoBeforeAudit);const closeReal=await search(pg,{lat:45.4465818,lng:9.1791645,radius_km:1});assert.ok(closeReal.items.some(r=>r.legacy_id==='EV-URGANT-MIL-20261020'));mark('verified_osm_geocoding_idempotent_and_nearby');
+const dump=await pg.dumpDataDir();const buf=Buffer.from(await dump.arrayBuffer());await fs.writeFile(input+'/postgres-staging.tar.gz',buf);const hash=createHash('sha256').update(buf).digest('hex');
+const restored=await create({loadDataDir:dump});assert.deepEqual(await counts(restored),await counts(pg));const recovered=await search(restored,{limit:200});const originalSearch=await search(pg,{limit:200});delete recovered.generated_at;delete originalSearch.generated_at;assert.deepEqual(recovered,originalSearch);mark('actual_backup_restore_readback');
+const report={status:'PASS_STAGING_ONLY',runtime:'PGlite PostgreSQL + experimental PostGIS; not Supabase cloud acceptance',tests:passed,counts:await counts(pg),statuses,backup:{path:'postgres-staging.tar.gz',sha256:hash,restore:'PASS'},cloud_cutover:false,geo_entities_verified:3,locations_enriched:geoCounts,mapped_occurrences:(await search(pg,{limit:200})).mapped};await fs.writeFile(input+'/database-test-report.json',JSON.stringify(report,null,2)+'\n');await restored.close();await pg.close();console.log(JSON.stringify(report));
