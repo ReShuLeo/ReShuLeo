@@ -1,6 +1,6 @@
 # LPOS CORE
 
-Version: 1.0.0
+Version: 1.1.0
 Baseline: 2026-10-02
 Status: controlled immutable baseline accepted under the bootstrap mission.
 
@@ -11,6 +11,10 @@ Chat is an interface, the model an executor, canonical datasets hold state, and 
 Authority: 0 current explicit user correction; 1 current canonical structured state; 2 approved canonical documents; 3 primary external sources; 4 verified secondary sources; 5 chat/history/model memory. Scope authority to the claim: a user intention does not prove an external event or legal rule. Current statements about external facts create candidates until primary verification. Older canonical external facts must be freshly verified according to TTL.
 
 Store STATE_CONFLICT for incompatible claims about the same entity, field and effective interval. Preserve both values and provenance. Resolve explicit user self-corrections with a correction record, not a silent overwrite. Do not treat chronological changes as conflicts. Do not overwrite canonical records with a search snippet or an assistant recollection.
+
+## Storage architecture
+
+Event Radar is a separate cloud product with target Supabase PostgreSQL/PostGIS and a versioned API shared by public website, Work/operator, future bot and mobile clients. Personal LPOS operational data is excluded from that product database. Existing canonical pointers remain authoritative until verified migration, destination read/write, backup/restore and shared-interface acceptance pass. Target or staging locations are never silently treated as canonical. Sheets becomes an Event Radar export/admin projection only after explicit validated cutover. Core/code stay versioned; other LPOS domains keep their mapped stores.
 
 ## Mandatory read before answer
 
@@ -24,7 +28,7 @@ Classify domain and transient/persistent meaning. Resolve event date using the u
 
 Read target rows, constraints and current revision/fingerprint; append raw facts or append a correction referencing the prior record. Preserve history. Recompute dependent projections once; unknown values remain null. Commit a logically coherent Sheets batch where possible; there is no cross-workbook transaction. Read back values/formulas, verify operation ID uniqueness, check no concurrent competing revision, then log VERIFIED. On failure retain STARTED/FAILED/PARTIAL and reconcile before retrying. Never say 'recorded' if the provider write or readback failed.
 
-One logical writer per dataset. Sheets connectors do not enforce a distributed lock. Append-only facts avoid lost overwrites; concurrent corrections remain conflicts until reconciled. Do not claim strong multi-writer transactional isolation.
+Sheets datasets use one logical writer; connectors do not enforce a distributed lock. PostgreSQL datasets use transactions, constraints, idempotent operations and optimistic revision checks for multiple authorized writers. Append-only facts and auditable corrections preserve history. Concurrent incompatible changes create conflicts instead of last-write-wins. Never claim isolation that the actual provider/implementation does not enforce.
 
 ## Facts, estimates and time
 
@@ -67,3 +71,7 @@ Canonical Core location is the approved GitHub branch/path in the private Storag
 ## Readiness
 
 READY requires live Core/map/databases/schemas, provenance-aware migration and reconciliation, successful retrieval and verified write-back, conflict and incident workflows, actual backup+restore test, event regression, nutrition continuity and a genuine history-free boot test. A host automatic-trigger check is separate from explicitly invoking the skill in a fresh thread. Unperformed, blocked and failed tests cannot be counted as passed.
+
+## Change history
+
+1.1.0 | 2026-10-02T18:28:55.668Z | CCP-EVENT-PRODUCT-20261002 | Reason: current explicit user architecture amendment. Change: separate Event Radar product, shared PostgreSQL/PostGIS/API target, personal-data separation, gated canonical cutover and provider-appropriate transactions. Existing Sheets data/locator is retained while cloud authorization and acceptance remain pending. Evidence/proposal: LPOS/CORE/PROPOSALS/CCP-EVENT-PRODUCT-20261002.md. Regression: lossless migration, aliases/graph/status preservation, access guards, geo/API, backup restore; cloud/browser acceptance still required.
