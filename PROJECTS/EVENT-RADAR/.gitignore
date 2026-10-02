@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.env*
+!.env.example
+private/
+test-results/
+*.dump
+*.log
+__pycache__/
+*.tsbuildinfo
+CLAUDE.md
