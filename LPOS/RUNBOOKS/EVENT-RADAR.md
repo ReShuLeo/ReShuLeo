@@ -1,0 +1,19 @@
+# Event Radar runbook
+
+Version: 1.0.0
+
+Scope every run by run_id, date/time, horizon (default next 90 days), cities and mode. Tier 1: Milano, Como, Monza, Lugano, Mendrisio, Chiasso, Zürich. Tier 2: Lombardia, Ticino, Northern Italy and neighboring Switzerland. Discover Russian-speaking/CIS/post-CIS/Ukrainian/Belarusian/Kazakh/Georgian/Armenian/Moldovan/Slavic communities plus strong business/founders/networking/AI-tech/social/nightlife/fashion events. Social potential changes priority only.
+
+Pass 0 load Core, domain Core, events, source graph, latest run and unresolved incidents. Pass 1 high-recall discovery. Pass 2 expand each candidate into artist, organizer, promoter, venue, DJ, community, association, Telegram, Instagram, ticket seller, partner and series nodes. Pass 3 verify with organizer/tour/ticket/venue primary pages. Pass 4 deduplicate by identity, city, local start and venue; preserve reschedule history, never merge ambiguous events automatically. Pass 5 compute delta against stored records and source fingerprints; unchanged events are not new. Pass 6 sibling/miss check. Pass 7 run independent benchmarks. Pass 8 persist registry and log, readback, then finish status.
+
+Required independent lanes: A SEARCH, B ARTIST/TOUR, C TICKETING, D PUBLIC_TELEGRAM, E INSTAGRAM, F COMMUNITIES, G ORGANIZERS/PROMOTERS, H VENUES, I EVENT_TYPES, J CITY/FESTIVAL/CONFERENCE. Each lane records source, direct/catalog/archive action, query, result, access status and evidence. A fallback web-index query does not turn an inaccessible archive/catalog into a checked one. Instagram organizer accounts and public Telegram authors are primary sources for their own announcements; reposts inherit verification requirements. Private contents are never claimed as checked. Use an allowed browser fallback for direct public inspection when available.
+
+Ticket seeds: TicketOne, Ticketmaster, Eventbrite, Billetto, EventCartel, mticket.eu, Best Events Europe, BiletItalia, Eventfrog, KARABAS, Kontramarka, BiletKartina, DICE, Resident Advisor. Telegram seeds: afisha_milan, rutoitaly, russiansinmilan, RUitaly, milanru, russiansin_italy, Milano_RU, chEVENTru. Instagram seeds: impreza.it, mmevents.it, afishamilano. Seeds are unverified entry points until inspected and never a whitelist. Sources expand after each useful node.
+
+Source access outcomes: DIRECT_READ, CATALOG_READ, ARCHIVE_READ, INDEX_ONLY, LOGIN_REQUIRED, ROBOTS_BLOCKED, NOT_FOUND, ERROR, NOT_ATTEMPTED. COMPLETE requires all ten lanes with sufficient direct evidence for scope. All mandatory ticket seeds must have actual catalog/search evidence or recorded failure. Any missing/inaccessible required pipeline yields INCOMPLETE. Never say 'no new events' after INCOMPLETE. State discoveries and missing coverage.
+
+Zero-miss is an objective. Use a finite source/expansion budget; if a potentially missed public event remains UNKNOWN, record the unsearched queue and incomplete status instead of an infinite loop or a 100% guarantee.
+
+Regression benchmarks: IMPREZA Money Club Milano 2026-09-19; Big Networking #7 Talent Garden Milano 2026-09-19; Kasta Legend Club Milano 2026-09-22; MM Events Fashion Week Party Milano 2026-09-25; Ermek Tursunov Milano 2026-09-29; Urgant Live Milano 2026-10-20. Miss-class checks: KINO Symphony, KARABAS Italy, chEVENTru, MORGENSHTERN Zürich afterparty, Plan B Week side events, Russian-language Eventfrog. Historical benchmarks validate architecture, not freshness or a new recommendation. Urgant must be independently discovered from tour and/or TicketOne, not only from a copied fixture.
+
+Miss root causes: SOURCE, QUERY, ARTIST, TICKET, TELEGRAM, INSTAGRAM, COMMUNITY, VENUE, DATE/YEAR, DEDUP, ACCESS, MODEL/JUDGMENT. Record proven cause or SUSPECTED with evidence/unknowns. Without old logs, do not claim a definitive cause. Search siblings through the failed source/pipeline. Log uncovered results and unresolved access gaps.
