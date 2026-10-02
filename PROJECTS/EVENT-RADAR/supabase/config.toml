@@ -1,0 +1,11 @@
+project_id = "event-radar"
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 200
+[db]
+major_version = 16
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
