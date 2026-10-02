@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "schemas": {
     "GLOBAL_PROFILE": [
       "fact_id",
@@ -309,6 +309,34 @@
       "reason",
       "rejected_at",
       "reconsider_after"
+    ],
+    "FOOD_REFERENCE": [
+      "food_id",
+      "food",
+      "brand",
+      "basis",
+      "calories",
+      "protein",
+      "fat",
+      "carbs",
+      "external_source",
+      "confidence",
+      "last_verified",
+      "source",
+      "notes"
+    ],
+    "GOALS": [
+      "goal_id",
+      "domain",
+      "key",
+      "value",
+      "effective_from",
+      "effective_to",
+      "recorded_at",
+      "last_verified",
+      "source",
+      "confidence",
+      "status"
     ]
   },
   "common_rules": {
@@ -317,9 +345,14 @@
     "correction": "append with supersedes; no destructive overwrite",
     "calendar": "event date uses event/user timezone",
     "legacy_aliases": {
-      "FOOD_REFERENCE": "ПРОДУКТЫ",
-      "GOALS": "ПРОФИЛЬ И ЦЕЛИ",
-      "FOOD_LOG": "live union: legacy ДНЕВНИК food leaves + normalized FOOD_LOG additions"
-    }
+      "FOOD_LOG": "Canonical raw ДНЕВНИК food leaves; FOOD_LOG is derived read-only typed projection",
+      "ACTIVITY_LOG": "Canonical raw ДНЕВНИК activity leaves; ACTIVITY_LOG projection",
+      "BODY_METRICS": "Canonical raw dated profile/diary observations; BODY_METRICS projection",
+      "FOOD_REFERENCE": "Canonical raw ПРОДУКТЫ; FOOD_REFERENCE projection",
+      "GOALS": "Canonical raw ПРОФИЛЬ И ЦЕЛИ; GOALS projection",
+      "DAILY_SUMMARY": "Derived only; raw source hash required; legacy ИТОГИ is not authoritative for missing dates"
+    },
+    "projection_authority": "source remains canonical; materialized views validated by live input hash; writes append raw then refresh",
+    "blank": "Native blank/empty cell means null unknown, never observed zero"
   }
 }
