@@ -1,0 +1,2 @@
+import {parseFilters} from '@/lib/filters';import {rpc} from '@/lib/rpc';import {requireOperator} from '@/lib/operator';import {failure} from '@/lib/http';
+export async function GET(req:Request){try{requireOperator(req);return Response.json(await rpc('radar_operator_search',{p_filters:parseFilters(new URL(req.url).searchParams,true)},true),{headers:{'Cache-Control':'no-store'}});}catch(e){return failure(e);}}
