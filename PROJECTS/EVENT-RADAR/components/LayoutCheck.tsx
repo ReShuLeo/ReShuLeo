@@ -1,0 +1,3 @@
+'use client';
+import {useState} from 'react';
+export default function LayoutCheck(){const [width,setWidth]=useState(390);return <main id="main-content" style={{padding:20}}><h1 style={{fontSize:24,marginBottom:15}}>Проверка мобильной вёрстки</h1><div style={{display:'flex',gap:12,marginBottom:20}}>{[320,360,390,430,768,1280].map(w=><button key={w} style={{background:width===w?'#d1f56e':'#343934',color:width===w?'#182113':'white',padding:'10px 15px',borderRadius:8}} onClick={()=>setWidth(w)}>{w} пикселей</button>)}</div><iframe title="Мобильная версия" src="/" style={{width,height:844,border:'1px solid #65724c',display:'block',borderRadius:22,background:'#101211'}}/></main>}

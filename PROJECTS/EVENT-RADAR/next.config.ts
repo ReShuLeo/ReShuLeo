@@ -6,7 +6,8 @@ const config: NextConfig = {
     {key:'X-Content-Type-Options',value:'nosniff'},
     {key:'Referrer-Policy',value:'strict-origin-when-cross-origin'},
     {key:'Permissions-Policy',value:'geolocation=(self), camera=(), microphone=()'},
-    {key:'X-Frame-Options',value:'DENY'}
+    // Same-origin frames are allowed only for the local responsive QA harness.
+    {key:'X-Frame-Options',value:process.env.NODE_ENV==='development'?'SAMEORIGIN':'DENY'}
   ]}]; }
 };
 export default config;
